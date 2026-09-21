@@ -25,6 +25,29 @@ _NON_ALPHA_PATTERN = re.compile(r"[^a-zA-Z]")
 _STOPWORDS = set(stopwords.words("english"))
 _STEMMER = PorterStemmer()
 
+# Added after Step 4 CV diagnostics: coefficient inspection on LinearSVC
+# showed "reuter" and "edt" still among the strongest real-news
+# indicators even after strip_reuters_dateline(). The leading-anchor
+# pattern only removes the opening "CITY (Reuters) - " dateline; it
+# doesn't touch mid-article references or trailing bylines. These
+# patterns catch what's left.
+# \bReuters\b catches the bare word regardless of surrounding
+# punctuation, so it matches both "(Reuters)" and mid-article
+# self-references like "Reuters reported in October..." — the earlier
+# paren-only version missed that second case (confirmed via the 20-row
+# spot check: rows still had "reuter" after stemming, from bare
+# mentions with no parentheses around them).
+_REUTERS_ANYWHERE_PATTERN = re.compile(r"\bReuters\b", re.IGNORECASE)
+_URL_PATTERN = re.compile(r"https?://\S+|www\.\S+")
+_TWITTER_PIC_PATTERN = re.compile(r"pic\.twitter\.com/\S+")
+_IMAGE_CREDIT_PATTERN = re.compile(
+    r"(Featured image|Photo|Image)\s+(via|by|credit)\s+[^.\n]*", re.IGNORECASE
+)
+_TIMESTAMP_PATTERN = re.compile(
+    r"\b\d{1,2}:\d{2}\s?(am|pm)?\s?(EDT|EST|PST|PDT|CST|CDT|GMT|UTC)\b",
+    re.IGNORECASE,
+)
+
 
 def strip_reuters_dateline(text: str) -> str:
     """Remove a leading Reuters dateline like 'WASHINGTON (Reuters) - '.
@@ -34,6 +57,28 @@ def strip_reuters_dateline(text: str) -> str:
     string "(Reuters)" instead of anything about the article itself.
     """
     return _REUTERS_PATTERN.sub("", text, count=1)
+
+
+def strip_boilerplate(text: str) -> str:
+    """Remove scraped artifacts that aren't part of the article prose.
+
+    Three sources, found via LinearSVC coefficient inspection after
+    Step 4's first CV run:
+    - leftover "(Reuters)" mentions beyond the leading dateline
+    - embedded URLs and pic.twitter.com fragments (tweet embeds)
+    - image-credit caption lines like "Featured image via Getty Images"
+
+    Deliberately NOT stripping outlet names like "Breitbart" here. That
+    would mean enumerating every outlet in the corpus by hand, which
+    doesn't generalize and just hides a real limitation of this dataset
+    instead of documenting it. See README for that caveat.
+    """
+    text = _REUTERS_ANYWHERE_PATTERN.sub("", text)
+    text = _URL_PATTERN.sub("", text)
+    text = _TWITTER_PIC_PATTERN.sub("", text)
+    text = _IMAGE_CREDIT_PATTERN.sub("", text)
+    text = _TIMESTAMP_PATTERN.sub("", text)
+    return text
 
 
 def clean_text(text: str) -> str:
@@ -67,6 +112,7 @@ def build_content(title: str, text: str, include_text: bool = True) -> str:
 
     if include_text:
         text = strip_reuters_dateline(text)
+        text = strip_boilerplate(text)
         raw = f"{title} {text}"
     else:
         raw = title
